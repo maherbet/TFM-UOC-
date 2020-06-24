@@ -1,0 +1,183 @@
+---
+title: "Pipeline: miRNA"
+author: 'María Araceli Hernández Betancor'
+date: '`r format(Sys.Date(),"%e de %B, %Y")`' 
+# date: \today  (solo para pdf)
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: true
+    theme: united
+  html_notebook:
+    df_print: paged
+    toc: yes
+    toc_float: true
+    theme: united
+  pdf_document:
+    keep_tex: yes
+    toc: yes
+    df_print: kable
+header-includes: \usepackage[spanish]{babel}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NULL, cache=TRUE)
+options(width=90)
+```
+
+```{r packages, message=FALSE, echo=FALSE, eval=FALSE, warning=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+BiocManager::install(c("Biobase", "GEOquery", "limma", "mclust", "devtools", "GOstats", "gplots", "miRNAtap", "miRNAtap.db", "SpidermiR"))
+```
+
+\pagebreak
+
+
+# DATASET: GSE54578
+
+Una vez instalados los paquetes de Bioconductor necesarios para el análisis de datos de *microarray* de miRNA, se desacarga el *dataset* GSE54578 de la página web Pubmed (<https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE54578>).
+El estudio analiza la expresión de miRNA de todo el genoma en sangre de 15 casos de esquizofrenia (SZ) de inicio temprano (EOS) y 15 controles sanos. Los microarrays de muestras detectaron un total de 1070 miRNAs. Se analiza la expresión de miRNA en 15 muestras de pacientes con esquizofrenia y 15 controles sanos para explorar la alteración de los miRNA en la esquizofrenia, siguiendo el flujo de trabajo propuesto por *Emilio Mastriani et al.*
+Se utiliza la plataforma GPL16016 (Exiqon miRCURY LNA microRNA array).
+Se puede realizar la descarga directamente mediante el enlace, o a través del paquete *"GEOquery"* y la función *"getGEO"*. Finalmente se guarda el conjunto de datos en *gset*, para su posterior procesamiento y análisis.
+
+```{r frag1,message=FALSE,warning=FALSE}
+library("GEOquery")
+gset<-getGEO("GSE54578", GSEMatrix=TRUE, AnnotGPL=FALSE)
+if(length(gset)>1) idx <-grep("GPL1606", attr(gset,"-names")) else idx<-1
+gset<-gset[[idx]]
+```
+
+
+# PREPROCESAMIENTO
+
+Los datos de expresión miRNA pueden tener valores perdidos "NA" y las columnas son nominadas como "GSM". Se puede mostrar la estructura de los datos, y extraer inicialmente los regitros con valores perdidos y renombrar las columnas para facilitar su lectura (SCHIZ, CTRL).
+
+```{r frag2,message=FALSE,warning=FALSE}
+head(exprs(gset)) ## Se visualiza la presencia de valores perdidos
+rmv<-which(apply(exprs(gset),1,function(x) any (is.na(x))))
+```
+
+```{r frag3,message=FALSE,warning=FALSE}
+gset<-gset[-rmv,]
+sampleNames(gset)<-c("CTRL1","CTRL2","CTRL3","CTRL4","CTRL5","CTRL6","CTRL7","CTRL8","CTRL9","CTRL10","CTRL11","CTRL12","CTRL13","CTRL14","CTRL15","SCHIZO1","SCHIZO2","SCHIZO3","SCHIZO4","SCHIZO5","SCHIZO6","SCHIZO7","SCHIZO8","SCHIZO9","SCHIZO10","SCHIZO11","SCHIZO12","SCHIZO13","SCHIZO14","SCHIZO15")
+gsms<-"000000000000000111111111111111"
+sml<-c()
+for(i in 1:nchar(gsms)) {sml[i]<-substr(gsms,i,i)}
+head(exprs(gset))
+```
+
+Se comprueba gráficamente la intensidades de sonda para buscar posibles *outliers*, que podrían ser excluidos de un análisis posterior. Se observa la uniformidad de la intensidad de la señal a través de la función *"boxplot()"*, con escasa variabilidad entre los arrays.
+
+```{r frag4,message=FALSE,warning=FALSE}
+ex<-exprs(gset)
+boxplot(ex, which="pm", ylab="Intensidades", xlab="Nombre de array", col="blue")
+```
+
+
+# NORMALIZACIÓN
+
+Tras renombrar los *arrays* y filtrar los datos de posibles sesgos experimentales, se continua con la normalización de los datos para evitar la variabilidad de origen no biológico. Existen diferentes paquetes para realizar la normalización ("ExiMir" y la función *"NormiR"* para los *microarrays* de dos colores, "affy" para los *arrays* de Affymetrix). En este caso se ha utilizado el paquete "limma" y la función *"normalizeBetweenArrays"* que permite una *quantile normalization*.
+Se muestra gráficamente con la función *"boxplot"* el efecto de la normalización de los datos. Se realiza una transformación log2 de los valores de expresión normalizados para favorecer la distribución gaussiana.
+
+```{r frag5,message=FALSE,warning=FALSE}
+library("limma")
+ex_norm<-normalizeBetweenArrays(ex)
+qu<-as.numeric(quantile(ex,c(0.,0.25,0.5,0.75,0.99,1.0),na.rm=T))
+filt<-(qu[5]>100 || (qu[6]-qu[1]>50 && qu[2]>0 || (qu[2]>0 && qu[2]<1 && qu[4]>1 && qu[4]<2)))
+if(filt){ex_norm[which(ex<=0)]<-NaN; exprs(gset)<-log2(ex_norm)}
+boxplot(ex_norm, which="pm", ylab="Intensidades", xlab="Nombre de array", col="red")
+```
+
+Los datos normalizados se pueden comparar entre grupos mediante *T Test*, para medir si la diferencia de expresión es significativa entre ambos grupos (*p-valores* más bajos). Esta comparación de genes entre grupos se realiza de manera múltiple y simultánea. Para la comparación se utiliza la función *eBayes* del paquete *"limma"*. Mediante esta función se calcula a través de una moderación empírica de Bayes de los errores estándar hacia un valor común, y dado un ajuste de modelo lineal de *microarrays*, estadísticos t moderados, estadístico F moderado y probabilidades logarítmicas de expresión diferencial.
+
+```{r frag6,message=FALSE,warning=FALSE}
+sml<-paste("G",sml,sep="")
+fl<-as.factor(sml)
+gset$description <- fl
+design <- -model.matrix(~ description + 0, gset)
+colnames(design) <- levels(fl)
+fit <- lmFit(gset, design)
+cont.matrix <- makeContrasts(G1-G0, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=1000)
+head(tT,10)
+```
+
+Los resultados del contraste se guardan en los objetos *"fit2"* y *"tT"*, para su posterior análisis. Es importante desde el punto de la significación, tanto el el p-valor estadístico como la amplitud del *fold change*. Estos valores pueden representarse gráficamente en un *"volcanoplot"*. En el gráfico en el eje X se representa el *fold change*, y en el eje Y los p-valores (resultados log-transformados), resaltando los conjuntos de sondas superiores. Se muestran los miRNAs diferencialmente expresados entre muestras de pacientes con esquizofrenia y controles. También se puede usar la función *"ggplot2"*.
+
+```{r frag7,message=FALSE,warning=FALSE}
+volcanoplot(fit2, coef=1, highlight=10)
+```
+
+Otra opción es realizar un análisis *"clustering"* de los datos *microarray* de miRNA. Se puede visualizar un *"heatmap plot"* de un subconjunto de miRNAs con expresión diferencial significativa entre pacientes con enfermedad y controles (FDR, p-valor ajustado inferior a 0.05). 
+
+```{r frag8,message=FALSE,warning=FALSE}
+selected<-which(p.adjust(fit2$p.value[,1]<0.05) == 1)
+esetSe1<-ex_norm[selected,]
+heatmap(esetSe1)
+```
+
+
+# DIANA DE miRNA
+
+Esta es una particularidad que nos encontramos en el análisis de datos miRNA a diferencia de otros datos transcriptómicos, el análisis de genes diana específicos (*target*). Los miRNAs regulan la expresión de genes diana post-transcripción o traducción, resultando relevante la anotación de sus genes diana. Para la identificación de *target genes* de miRNAs, se pueden usar distintas herramientas. Para el desarrollo de este "*pipeline*" se utiliza el paquete *"SpidermiR"*. Permite obtener *target genes* validados y predichos de múltiples bases de datos o herramientas de *software* (miR2Disease, miR-Tar, mirWalk, miRTarBase, miRandola, DIANA, Pharmaco-miR, PicTar, Miranda y TargetScan). Se pueden visualizar redes de genes. Se usan los 5 miRNAs con expresión diferencial entre grupos más significativos. Las dianas de estos miRNAs se predicen con *"SpidermiRdown-load_miRNAprediction"* y son exportados a *"mirnaTar"*. Se obtiene la predicción con las herramientas Miranda, DIANA, PicTar y TargetScan. Se puede visualizar el *data frame*, se visualiza una primera columna con los nombres de miRNA y una segunda columna con el listado de genes diana. Otra opción sería descargar las dianas validadas desde miRTAR y miRwalk con la función *"SpidermiRdownload_miRNAvalidate"* 
+
+```{r frag9,message=FALSE,warning=FALSE}
+library(SpidermiR)
+tT[selected,]$Name[1:5]
+mirna<-c("hsa-miR-4429","hsa-miR-1827","hsa-miR-5002-5p","hsa-miR-5187-3p","hsa-miR-4455")
+mirnaTar<-SpidermiRdownload_miRNAprediction(mirna_list=mirna)
+head(mirnaTar,10)
+```
+
+
+# ANÁLISIS DE ENRIQUECIMIENTO
+
+A través del análisis de redes se pueden observar las dianas compartidas de múltiples miRNAs, y también las interacciones y *pathways* entre genes diana. Se puede usar la herramienta *"Cytoscape"* para la construcción de una red regulatoria entre los 5 miRNAs más significativos y las dianas predichas, 50 por cada miRNA. GeneMANIA trata redes validadas y predichas entre genes de una variedad de especies y proporciona un servidor web para visualizarlo. Entre los tipos de red se incluye: colocalización, coexpresión, *pathway*, interacciones genéticas y físicas, dominios proteicos compartidos, y predicción de interacciones. *"SpidermiR"* permite descargar los datos de interacción de GeneMANIA y visualizar la red de genes. El análisis de enriquecimiento para miRNAs y dianas también debe realizarse para estudiar su significación biológica y aumentar su potencia estadística. Se utiliza el paquete *"GOstats"* para realizar el analisis de enriquecimiento GO (proceso biológico) para los genes diana predichos de los 5 miRNAs más significativos.
+
+```{r frag10,message=FALSE,warning=FALSE}
+library("org.Hs.eg.db")
+library("GSEABase")
+library("GOstats")
+mirTarget<-as.vector(mirnaTar$V2)
+goAnn<-get("org.Hs.egGO")
+universe<-Lkeys(goAnn)
+entrezIDs<-mget(mirTarget, org.Hs.egSYMBOL2EG, ifnotfound = NA)
+entrezIDs<-as.character(entrezIDs)
+params<-new("GOHyperGParams",
+            geneIds=entrezIDs,
+            universeGeneIds=universe,
+            annotation="org.Hs.eg.db",
+            ontology="BP",
+            pvalueCutoff=0.01,
+            conditional=FALSE,
+            testDirection="over")
+goET<-hyperGTest(params)
+```
+
+```{r frag11,message=FALSE,warning=FALSE}
+library(Category)
+GObp<-summary(goET)
+head(GObp)
+```
+
+Se realiza además análisis de enriquecimiento KEGG.
+
+```{r frag12,message=FALSE,warning=FALSE}
+keggAnn<-get("org.Hs.egPATH")
+universe <-Lkeys(keggAnn)
+params<-new("KEGGHyperGParams",
+            geneIds=entrezIDs,
+            universeGeneIds=universe,
+            annotation="org.Hs.eg.db",
+            categoryName="KEGG",
+            pvalueCutoff=0.01,
+            testDirection="over")
+keggET<-hyperGTest(params)
+kegg<-summary(keggET)
+library(Category)
+head(kegg)
+```

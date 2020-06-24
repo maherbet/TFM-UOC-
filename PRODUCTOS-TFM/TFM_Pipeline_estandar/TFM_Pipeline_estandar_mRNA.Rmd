@@ -1,0 +1,509 @@
+---
+title: 'Pipeline estándar: mRNA'
+author: 'María Araceli Hernández Betancor'
+date: '`r format(Sys.Date(),"%e de %B, %Y")`' 
+# date: \today  (solo para pdf)
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: true
+    theme: united
+  html_notebook:
+    df_print: paged
+    toc: yes
+    toc_float: true
+    theme: united
+  pdf_document:
+    keep_tex: yes
+    toc: yes
+    df_print: kable
+header-includes: \usepackage[spanish]{babel}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NULL, cache=TRUE)
+options(width=90)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=FALSE}
+library(pasilla)
+library(edgeR)
+library(limma)
+library(Glimma)
+library(gplots)
+library(ggplot2)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+library(DiagrammeR)
+library(DiagrammeRsvg)
+library(dyplr)
+library(magrittr)
+library(svglite)
+library(rsvg)
+library(png)
+library(biomaRt)
+library(Biobase)
+library(affy)
+library(affyQCReport)
+library(org.Hs.eg.db)
+library(limma)
+library(annaffy)
+library(ReactomePA)
+library(airway)
+library(DESeq2)
+library(gage)
+library(gageData)
+library(pathview)
+library(SummarizedExperiment)
+library(vsn)
+library(apeglm)
+library(ashr)
+library(pheatmap)
+library(readr)
+```
+
+
+# 1. ABSTRACT
+
+Se analizan los datos combinados de dos estudios que nos permite comparar la expresión diferencial de genes en dos grupos étnicos, población caucásica y población africana nigeriana. Se usan los métodos implementados en el *paquete DESeq2 y EdgeR* fundamentalmente. Se concluye una expresión diferencial de utilidad en estudios evolutivos y para entender diferencias étnicas en la patogénesis de enfermedades.
+
+
+# 2. OBJETIVOS
+
+**OBJETIVOS GENERALES:** Se plantean **dos objetivos**: **1)** Utilizando los datos preparados *(dataset2)* correspondientes a la combinación de los datos de los artículos de *Montgomery* y *Pickrell* se realiza su análisis, a partir de los ***read counting (count table)***. **2)** Se redacta con los resultados obtenidos un informe con la estructura tradicional de un informe técnico-científico.   
+**OBJETIVOS ESPECÍFICOS:** **1)** Identificación de los genes diferencialmente expresados en los dos grupos étnicos estudiados (poblacion caucásica y africana de origen nigeriano). **2)** Análisis de la significación biológica, procesos biológicos o vías metabólicas en las que los genes diferencialmente expresados están implicados.
+
+
+# 3. MATERIAL Y MÉTODOS
+
+## 3.1. Tipo de experimento
+
+En *PubMed* se define el experimento como un **estudio de perfil de expresión génica mediante secuenciación de alto rendimiento (RNA-seq)**. El *dataset* seleccionado es la combinación de dos estudios independientes: el estudio de *Montgomery et al* en población caucásica donde se secuencia la fracción de ARNm del transcriptoma de líneas celulares linfoblastoides de 60 individuos (CEU) combinando los datos con variantes genéticas del proyecto HapMap315, y el estudio de *Pickrell et al* en el que se realiza la secuenciación de 69 líneas celulares linfoblastoides derivadas de individuos nigerianos (YRI) no relacionados, que son genotipadas por el Proyecto Internacional HapMap. La plataforma utilizada es *Illumina Genome Analyzer II (Homo sapiens)*. Al combinar los datos de ambos estudios independientes, se obtiene un dataset con un total de 129 muestras humanas de dos grupos étnicos diferentes (60 CEU, 69 YRI) que se pueden comparar.
+
+## 3.2. Diseño experimental
+
+Se trata como se ha planteado de la comparación de dos grupos étnicos diferentes, dos grupos de muestras independientes, 60 de pacientes de origen europeo y 69 de origen africano nigeriano, que se combinan para estudiar su expresión genética diferencial y significación biológica. En el diseño experimental es importante diferenciar entre réplicas técnicas y biológicas. Las réplicas técnicas implican el uso de una misma muestra biológica, mismo procesado y mismos protocolos de secuenciación. Se espera que las diferencias observadas sean menores que las obtenidas con réplicas biológicas. En las réplicas biológicas se utilizan distintas muestras biológicas. En los experimentos RNA-seq, como en este caso, es más frecuente utilizar réplicas biológicas.
+
+## 3.3. Métodos
+
+El análisis se realizó utilizando ***"DESeq, Biomart"*** y ***"edgeR, limma y voom"***. 
+También se revisó la información disponible en el enlace "http:/bowtie-bio.sourceforge.net". Se detallan en la parte de resultados para relacionarlos con los *output* obtenidos.
+
+# 4. RESULTADOS
+
+## 4.1. Identificación de grupos y muestras pertenecientes
+
+Se lee y *carga* el *"dataset2.count.table"* con los datos crudos y el *phenodata* *"sampleinfo"*, se visualiza el número de muestras estudiadas y genes analizados, y se cargan los datos de *dataset2_eset.RData*. Se comprueba que se trata de **dos grupos poblacionales**, **60 muestras de pacientes caucásicos (CEU)** y **69 pacientes africanos nigerianos (YRI)**, **129 muestras en total**, donde se analizan **52580 genes**, con la función *head()* se verifica como todos los genes se identifican con identificadores ENSAMBLE, y no todos se expresan en las muestras (valor 0). Se extraen las observaciones que se corresponden con cada grupo étnico para visualizar las muestras pertenecientes a cada grupo (*sample.id*), constatando en el *phenodata* que hay una réplica por muestra para las muestras europeas y 2 para las muestras africanas, especificándose también el estudio (*study*) al que pertenece la muestra (*Montgomery*, *Pickrell*).
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+setwd("C:/Users/Araisa/Desktop/NGS/data")
+seqdata <- read.table("dataset2_count_table.txt", header=TRUE, sep="\t")
+seqdata1<-seqdata[,c(2:130)]
+sampleinfo <- read.table("sampleInfo1.txt",header=TRUE, sep="", na.strings="NA", dec=",", strip.white=TRUE)
+head(seqdata) 
+head(sampleinfo)
+head(sampleinfo[sampleinfo$population=="CEU",]) # muestras (sample.id) pertenecientes a CEU 
+head(sampleinfo[sampleinfo$population=="YRI",]) # muestras (sample.id) pertenecientes a YRI
+summary(sampleinfo$population)
+dim(seqdata1) # 52580 genes, 129 muestraS
+str(sampleinfo$num.tech.reps) # se constata que no hay réplicas técnicas
+colnames(sampleinfo)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(Biobase)
+load(url("http://bowtie-bio.sourceforge.net/recount/ExpressionSets/montpick_eset.RData"))
+expdata= exprs(montpick.eset)
+count.data<-exprs(montpick.eset)
+head(rownames(expdata))
+head(colnames(expdata))
+```
+
+Se observa la presencia de *"ruido"* en la base de datos. Los genes con recuentos muy bajos, proporcionan poca evidencia en la expresión diferencial, interfiriendo a nivel estadístico en el ajuste múltiple mediante FDR reduciendo la *"potencia estadística"* en la detección de genes diferencialmente expresados. Se expone una opción de filtrado del paquete *"edgeR"* mediante la función *"cpm()"*. Permite retener los genes si se expresan, en este ejemplo, en un conteo por millón (CPM) por encima de 0.5 en al menos dos muestras. Al convertir a CPM, se normaliza según el *"Sequencing depth"* de cada muestra, es decir según el número de lecturas que cubre cada posición. Se realiza *plot* para su representación gráfica. Como regla general, se puede elegir un umbral identificando el CPM que corresponde a un recuento de 10. Se crea un objeto *DGEList (edgeR)* para almacenar datos de recuento.  
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(edgeR)
+myCPM<-cpm(seqdata1)
+thresh<-myCPM>0.5
+table(rowSums(thresh))
+keep<-rowSums(thresh)>=2
+counts.keep<-seqdata1[keep,]
+summary(keep)
+dim(counts.keep)
+plot(myCPM[,1], seqdata1[,1])
+y<-DGEList(counts.keep)
+names(y)
+head(y$samples)
+```
+
+Se representan los datos (*dataset2_count_table*) gráficamente a través de un histograma, descartando los genes que no se expresan. Hay unos pocos valores muy altos, se prueba a realizar una transformación logarítmica y se representan los datos transformados logarítmicamente gráficamente. Se retomará la transformación de los datos en el siguiente apartado de control de calidad.  
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+count.table <- seqdata1[rowSums(seqdata1) > 0,]
+hist(as.matrix(count.table))
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+hist(as.matrix(log2(count.table + 1)), breaks=100)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+col<-c("red", "green")
+boxplot(log2(count.table+1), col=col)
+```
+
+*Ensembl* es un proyecto de investigación bioinformática que trata de desarrollar un sistema de software que produzca y mantenga anotaciones automáticas en los genomas eucariotas seleccionados. El paquete *biomaRt* es un interfaz para poder acceder a una serie de bases de datos que implementan *BioMart*. Se elige utilizar *Ensembl*. Se selecciona el conjunto de datos correspondiente al ser humano. La función *useEnsembl()* permite conectarse a una base de datos y un conjunto de datos de BioMart especificados alojados por Ensembl sin tener que especificar la URL de Ensembl. Para saber qué bases de datos de BioMart están disponibles, se puede consultar la función *listEnsembl()*. La función *listAttributes()* enumera los atributos disponibles en el conjunto de datos seleccionado. La función *getBM()* es la función principal de consulta biomaRt. Dado un conjunto de filtros y valores correspondientes, recupera los atributos especificados por el usuario de la base de datos BioMart a la que está conectado. Esta anotación facilita posteriormente el reconocimiento de los genes diferencialmente expresados resultantes del uso de DEseq2. 
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(biomaRt)
+listEnsembl()
+ensembl<-useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", mirror = "uswest")
+listAttributes(ensembl)[10,]
+SYMBOL<-getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "description", "entrezgene_id"), filters="ensembl_gene_id", values=rownames(expdata), mart=ensembl)
+SYMBname<-SYMBOL$hgnc_symbol[match(rownames(expdata), SYMBOL$ensembl_gene_id)] # se ordena por "rownames" de "expdata"
+SYMBname[is.na(SYMBname)]<-rownames(expdata)[is.na(SYMBname)] # valores NA, "", conservan valor "entrezgene" de partida
+SYMBname[SYMBname==""]<-rownames(expdata)[SYMBname==""]
+head(SYMBname[duplicated(SYMBname)]) # se comprueban duplicidades y se resuelve añadiendo terminación numérica a las repeticiones
+dupl<-as.matrix(SYMBname[duplicated(SYMBname)])
+for(i in 1:length(dupl)) {
+  SYMBname[SYMBname==dupl[i]]<-paste(dupl[i], 1:length(SYMBname[SYMBname==dupl[i]]), sep="_")
+}
+rownames(expdata)<-SYMBname # se añade anotación
+```
+
+## 4.2. Control de calidad de los datos crudos (*clustering*, *PCA*)
+
+Se crea un objeto **"DESeqDataSet"** mediante la función *"DESeqDataSetFromMatrix()"* con la que se asocian los conteos y el diseño experimental para el posterior analisis de la expresión génica diferencial. A continuación se consideran solo los genes que se expresan, eliminando aquellos que presentan un valor "0". Se reduce así el número de genes a 12984. Se transforman los datos mediante ***VST*** (*Variance Stabilizing Transformation*). Los datos de RNA-Seq preprocesados con ***VST*** son los más parecidos a los de microarrays en cuanto a distribución del coeficiente de correlación y topología *(Giorgi et al., 2013)*. Se trata de una **transformación estabilizadora de la varianza** a partir de la relación ajustada dispersión-media y posterior transformación de los datos de recuento (**normalizados** por división por los factores de tamaño o factores de normalización), produciendo una matriz de valores que ahora presentan aproximadamente homocedasticidad (varianza constante a lo largo del rango de valores medios). La transformación también se normaliza con respecto al tamaño de la *library*. El rlog es menos sensible a *"size factors"*, cuando varían ampliamente. Estas transformaciones, por ejemplo, son útiles cuando se buscan tanto **valores atípicos** como *input* para técnicas de *machine learning*, como ***clustering***.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(DESeq2)
+dds<-DESeqDataSetFromMatrix(countData = expdata, colData = sampleinfo, design = ~ 0 + population)
+dds<-dds[rowSums(counts(dds))>0,]
+head(dds)
+nrow(dds) # quedan 12984 genes con un valor de expresión superior a 0
+vst<-vst(dds, blind=FALSE) # transformación (y "normalización"): vst
+```
+
+Para facilitar la *diferenciación de muestras* se utilizan distintos *colores* para distinguir ambas poblaciones, añadiendo al *phenodata* denominado *sampleinfo* una nueva columna **color**. 
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+color.population<-sampleinfo$population
+colores<-c("red", "green")
+names_colores<-names(table(sampleinfo$population))
+for(i in 1:3){
+color.population<-gsub(paste("",names_colores[i], sep=""), colores[i], color.population)
+}
+names.color.population<-sampleinfo$sample.id
+sampleinfo$colores<-as.character(color.population)
+head(sampleinfo)
+```
+
+Se presentan en **boxplot** las muestras pertenecientes a ambas poblaciones tras la transformación mediante ***VST***. Se observa una mayor homogeneidad, en general, de las muestras de ambas poblaciones, a excepción de alguna muestra de la población caucásica.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(ggplot2)
+ggplot(stack(as.data.frame(assay(vst))), aes(x=ind, y=values, fill=ind))+ geom_boxplot(alpha=0.9, color="grey", outlier.colour = "grey") + scale_fill_manual(values=sampleinfo$colores) + scale_y_continuous(name=NULL) + theme(legend.position="none", axis.text.x=element_text(angle=80, hjust=1)) + scale_x_discrete(name="Samples") + ggtitle("Boxplot VST") + theme(plot.title= element_text(size=12, family="Console", face="bold"), text=element_text(size=10, family="Console"), axis.title= element_text(face="bold.italic"), axis.text.x=element_text(size=8), panel.background= element_rect(fill="white", colour="white", size=0.6, linetype="solid"))
+```
+
+Se adjunta a continuación la representación gráfica de *PCA* tras las *transformación* de las muestras mediante *VST*. Se observa en el primer gráfico que la variabilidad se muestra fundamentalmente con los dos primeros componente (casi un 25% de la variabilidad), y se refleja mejor las diferencias entre ambas poblaciones "CEU" e "YRI" en el siguiente gráfico donde se representan las dos primeras **"PC"**.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+PCAT<-prcomp(t(assay(vst)), scale=FALSE)
+sum<-summary(PCAT)$importance[2,]*100
+barplot<-barplot(sum[1:10], col="lightblue", main="SCREE PLOT", ylim=c(0,30))
+text(barplot,sum[1:10], paste(round(sum[1:10],1),"%"), c.ext=1, pos=3)
+abline(h=(sum[2]+sum[3])/2, col="blue")
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+PCA<-plotPCA(vst, intgroup=c("population"), returnData=TRUE)
+porc<-round(100*attr(PCA,"percentVar"))
+ggplot(PCA,aes(PC1,PC2, color=population)) + 
+  scale_color_manual(values=c("red","green")) + 
+  geom_point(size=2) + 
+  xlim(-25,25) + 
+  xlab(paste0("PC1_",porc[1],"%Varianza")) + 
+  ylab(paste0("PC2_",porc[2],"%Varianza")) + 
+  theme(plot.title= element_text(size=12, family="Console", face="bold"),
+        text=element_text(size=10, family="Console"),
+        axis.title=element_text(face="bold.italic"), axis.text.x=element_text(size=8),
+        panel.background= element_rect(fill="white", colour="blue", size=0.6,
+                                       linetype="solid"))
+```
+
+A continuación se realiza el ***clustering*** de las muestras transformadas *(vst)*, mediante la función ***"hcut()"*** que permite el ***análisis jerárquico de conglomerados***. A partir de una matriz de distancia se puede trazar un dendograma para mostrar una relación jerárquica entre las muestras diferenciándose ***k*** grupos. Además de utilizar el agrupamiento en base a la ***distancia Euclidea*** (*hclust*) también acepta métodos de medición de distancia basados en  correlacion de ***pearson***, ***spearman***, ***kendall***. Al realizar el agrupamiento se observan la mayoría de las muestras de la población "YRI" en el cluster ***azul***, las muestras de "CEU" se distribuyen mayoritariamente en el *"cluster"* ***verde***, y en el ***rojo*** se ve de ambas poblaciones, pero mayoritariamente de "CEU" .
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(factoextra)
+distancia<-dist(t(assay(vst)))
+res<-hcut(distancia, k=3, stand=TRUE, method="euclidean")
+res$labels<-as.character(dds$population)
+fviz_dend(res, cex = 0.3, k = 3, color_labels_by_k = TRUE)
+```
+
+Por otro lado, se utiliza también **otra opción** para el **control de calidad**, usando el ***objeto DGEList*** generado previamente, se llevan a cabo algunos gráficos que informan sobre el *Quality control*. Se representan gráficamente los *"library size"* mediante un diagrama de barras para valorar discrepancias importantes entre muestras. Se prueba también a utilizar **Boxplots** para verificar la distribución de lo recuentos en escala log2. Se usa la función ***cpm()*** para obtener los **recuentos de log2**, corregidos por los *library sizes*. La función ***cpm()*** incluye una *modificación* para eliminar el problema asociado al logaritmo de valores cero. Parece que las distribuciones del *counting data* , en su mayoría, no son muy diferentes. Las muestras muy por encima o por debajo de la línea roja, es posible que merezcan una investigacion más detallada.  
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+head(y$samples$lib.size)
+barplot(y$samples$lib.size, names=colnames(y), las=2)
+title("Barplot of library sizes")
+logcounts<-cpm(y, log=TRUE)
+boxplot(logcounts, xlab="", ylab="Log2 counts per million", las=2)
+abline(h=median(logcounts), col="red")
+title("Boxplots of logCPMs (unnormalised)")
+```
+
+Se representan gráficamente los datos mediante un *MDSplot* para visualizar la variabilidad en los datos. Se espera ver como principal fuente de variación en los datos el grupo o **población** estudiado, que se diferencian con **dos colores**, rojo "CEU" y verde "YRI". Resulta útil también para detectar ***valores atípicos***. También puede aportar información sobre posibles efectos ***batch***, teniendolo en cuenta en la *matriz de diseño*. Además es posible crear un **MDS interactivo** mediante ***Glimma*** (versiones interactivas de gráficos, paquete *limma*), también puede usarse en el ***Volcano plot***.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+plotMDS(y, col=color.population)
+title("Population")
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(Glimma)
+labels<-paste(sampleinfo$sample.id, sampleinfo$population, sampleinfo$study)
+group<-paste(sampleinfo$population, sampleinfo$study, sep=".")
+group<-factor(group)
+glMDSPlot(y, labels=labels, groups=group, folder="mds")
+```
+
+```{r, echo = FALSE}
+knitr::include_graphics("C:/Users/Araisa/Desktop/NGS/data/Imagen1.png")
+```
+
+## 4.3. Normalización
+
+En el apartado previo ya se ha realizado la nomalización de los datos mediante el uso de la función ***"cpm()"*** *(paquete edgeR)*, y mediante ***VST*** que permite transformar los datos pero también normalizarlos. De todas formas, se repite con los datos seleccionados, adjuntando los resultados, reflejando gráficamente las diferencias antes y después de la normalización mediante ***boxplot***. El procedimiento de normalización (RLE) se puede implementar a traves de la función ***"estimateSizeFactors()"***. El RLE dado un *"count.data"* estima los factores de tamaño dividiendo cada columna por las medias geométricas de las filas, la mediana de los cocientes se emplea como factor de tamaño para la columna *(size factor)*, omitiendo los genes con una media geométrica de cero, y se crea un objeto con los datos normalizados ***cds.norm***.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(DESeq2)
+library(DESeq)
+cond.type<-sampleinfo$population
+cds <- newCountDataSet(count.table, cond.type)
+estimSf <- function (cds){
+cts <- counts(cds)
+geomMean <- function(x) prod(x)^(1/length(x))
+gm.mean <- apply(cts, 1, geomMean)
+gm.mean[gm.mean == 0] <- NA
+cts <- sweep(cts, 1, gm.mean, FUN="/")
+med <- apply(cts, 2, median, na.rm=TRUE)
+return(med)
+}
+cds.norm <- estimateSizeFactors(cds)
+head(sizeFactors(cds.norm))
+par(mfrow=c(1,2),cex.lab=0.7)
+boxplot(log2(counts(cds.norm)+1), col=col, cex.axis=0.7, las=2)
+boxplot(log2(counts(cds.norm, normalized=TRUE)+1), col=col, cex.axis=0.7, las=2)
+```
+
+También se realiza el proceso de normalización denominado **TMM** que permite eliminar los sesgos de composición *(bias composition)* entre *libraries*. Este método genera un conjunto de factores de normalización, donde el producto de los factores y los *"library sizes"* definen el tamaño efectivo de la biblioteca *(effective library size)*. Mediante la función ***"calcNormFactors()"*** se pueden calcular los factores de normalización entre *"libraries"*. Un factor de normalización por debajo de uno indica que el *"library size"* se reducirá, debido a que hay más sesgo *bias composition* en esa *library* respecto a otras. Se re-escalan las recuentos *"incrementándolos"* en esa *muestra*. Un factor por encima de uno supone *"reescalar a la baja"* los recuentos. Se usan dos muestras, una con un factor de normalización más pequeño, y otra más alto. Si se realiza un gráfico de las ***diferencias medias*** usando la función ***"plotMD()"*** para dichas muestras se puede visualizar el problema de ***bias composition***. Se utilizan los ***logcounts***, normalizados por ***"library size"***, pero no para el sesgo de composición. Los gráficos de ***"diferencias de medias"*** muestran la expresión promedio (media: eje x) frente a los cambios ***"log-fold"*** (diferencia:eje y). Como el objeto DGEList contiene los factores de normalización, si se rehacen los gráficos usando el objeto se puede resolver el sesgo de composición. 
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+y <- calcNormFactors(y) # cálculo de factores de normalización
+head(y$samples) # muestra de algunas muestras con sus factores de nrmalización
+par(mfrow=c(1,2))
+plotMD(logcounts,column = 97) # plotMD de "logcounts" normalizados por "library size"
+abline(h=0,col="grey")
+plotMD(logcounts,column = 64)
+abline(h=0,col="grey")
+par(mfrow=c(1,2))
+plotMD(y,column = 97) # plotMD "log-fold"
+abline(h=0,col="grey")
+plotMD(y,column = 64)
+abline(h=0,col="grey")
+```
+
+## 4.4. Identificación de genes diferencialmente expresados
+
+Antes de identificar los genes diferencialmente expresados, mediante ***"DESeq"*** se ***estima la dispersión*** que puede utilizarse para la construcción del modelo para cada gen. Cuando se ha ajustado un modelo binomial negativo para cada gen, la función ***nbinomTest()*** se puede usar para evaluar la expresión diferencial. Resulta un ***data.frame*** que contiene valores raw p-values, y ***adjusted p-values*** (corrección para pruebas múltiples calculadas con el procedimiento de *Benjamini* y *Hochberg*).
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+cds.norm <- estimateDispersions(cds.norm) # estimación de dispersión
+plotDispEsts(cds.norm)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(DESeq)
+library(base)
+res1 <- nbinomTest(cds.norm, "CEU","YRI")
+res1 <- res1[order(res1$padj),]
+head(res1) # se presentan datos de tabla ordenados por p-valor decreciente
+```
+
+A continuación se utiliza el ***paquete DESeq2*** para realizar un ***análisis de la expresión diferencial de genes*** para el ***contraste entre dos poblaciones "CEU" e "YRI"***, los genes que se expresan diferencialmente en cada población, caucásica y africana nigeriana. Se valoran como genes con expresión diferencial (DE), los que tienen p-valores ajustados (FDR) inferior a 0.01. Se identifican 5628 genes con expresión diferencial, 2626 se expresan para "CEU" y están reprimidos para "YRI", 3002 al contrario están diferencialmente expresados en "YRI" y reprimidos en la población "CEU".
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+dds<-DESeq(dds)
+resultsNames(dds) # se diseña contraste
+resultados<-results(dds, contrast=c("population","CEU","YRI"))
+summary(resultados) # resumen de resultados de contraste
+library(base)
+resultados_filtrados<-as.data.frame(resultados)[which(resultados$padj<0.01),] # se guardan genes DE (FDR<0.01)
+head(resultados_filtrados)
+```
+
+## 4.5. Anotación de los resultados
+
+La anotación se había planteado en un apartado previo. A continuación se realiza la **anotación de resultados de genes** mediante ***"Symbol Gene"***. La función *useEnsembl()*, como ya se ha comentado previamente, permite la conexion a una base de datos y un conjunto de datos de BioMart especificados *("ensembl")*. Con la función *getBM()*, dado una serie de filtros con sus valores correspondientes, se recuperan los atributos de interés. En el ejemplo ***("ensembl_gene_id", "hgnc_symbol", "description", "entrezgene_id")***. Posteriormente se ordenan los resultados obtenidos, y se asignan los nombres de ***"Symbol Gene"*** a las filas correspondientes. Se guarda el objeto obtenido, se ordena según  ***FDR***, y se muestran los resultados de las primeras filas. Esta anotación de los resultados, favorece posteriormente el reconocimiento de los genes diferencialmente expresados. 
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+library(biomaRt)
+library(radiant.data)
+ensembl<-useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", mirror = "uswest")
+anotacion<-getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "description", "entrezgene_id"), filters="ensembl_gene_id", values=rownames(resultados_filtrados), mart=ensembl)
+SYMBname<-anotacion$hgnc_symbol[match(rownames(resultados_filtrados), anotacion$ensembl_gene_id)] # se ordena por "rownames" de "resultados_filtrados"
+SYMBname[is.na(SYMBname)]<-rownames(resultados_filtrados)[is.na(SYMBname)] # valores NA, "", conservan valor "entrezgene" de partida
+SYMBname[SYMBname==""]<-rownames(resultados_filtrados)[SYMBname==""]
+rownames(resultados_filtrados)<-SYMBname # se añade anotación a filas
+TOP_popCeuYri<-resultados_filtrados%>% # se guarda el objeto orenado por "FDR"
+  rownames_to_column("GENEID")%>%
+  arrange(padj)%>%
+  head(5700)
+head(TOP_popCeuYri) # se muestran primeras filas de objeto
+```
+
+## 4.6. Comparación entre distintas comparaciones
+
+Gráficamente, primero se comparan los resultados de expresión diferencial de genes en ambas poblaciones ***"CEU"*** e ***"YRI"***, para un **p-valor ajustado inferior a 0.01** y un **logFC superior a 2**, mediante un ***Volcano Plot***. Se observa una **mayor expresión diferencial de genes** (significativos) en el grupo poblacional **"YRI"** ***(EFEMP2, NEIL1, HNRNPDL,GOLGA8A, HSPA6)***, respecto al grupo poblacional **"CEU"** donde de modo significativo se expresan diferencialmente genes como ***CCL1***.  
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+alfa<-0.01 # padj<0.01
+color<-densCols(resultados$log2FoldChange,-log10(resultados$pvalue))
+plot(resultados$log2FoldChange,-log10(resultados$padj), col=color, panel.first=grid(),
+     main="Volcano Plot", pch=15, cex=0.5, xlim=c(-7,7))
+abline(v=0)
+abline(v=c(-2,2), col="red")
+genes<-abs(resultados_filtrados$log2FoldChange)>2
+text(resultados_filtrados$log2FoldChange[genes],-log10(resultados_filtrados$padj)[genes],
+     lab=rownames(resultados_filtrados)[genes], cex=0.5, font = 1)
+```
+
+Se adjunta también ***HeatMap*** para los primeros 80 genes que resultan del contraste diseñado previamente en el apartado de *identificación de genes diferencialmente expresados*, ***"TOP 80"***. Se observa el dendograma de ***clustering***, y la separación por colores de las muestras de ambas poblaciones, "CEU" (azul) e "YRI" (rojo). Algunas muestras de "YRI" rojas se visualizan en la zona azul de "CEU", pero en general están bien diferenciadas ambas poblaciones. Los genes de expresión diferencial obtenidos caracterizan ambas poblaciones. También se aprecia una mayor expresión para el grupo étnico africano de origen nigeriano.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+TOP<-TOP_popCeuYri$GENEID[1:80] # 80 genes TOP del contraste CEU e YRI
+sel<-assay(vst)[TOP,]# selección de valores de expresión de gens TOP
+dista<-t(sel) # "transposed matrix": dendogramas y distancias de "samples"
+
+dist_genes<-as.dist(1-cor(dista)) # genes
+cluster_genes<-hclust(dist_genes, method="mcquitty")
+dendograma_genes<-as.dendrogram(cluster_genes)
+dendograma_genes<-reorder(dendograma_genes,1:length(colnames(sel)))
+
+dist_muestras<-as.dist(1-cor(sel)) # muestras
+cluster_muestras<-hclust(dist_muestras, method="complete")
+dendograma_muestras<-as.dendrogram(cluster_muestras)
+dendograma_muestras<-reorder(dendograma_muestras, 1:length(colnames(sel)))
+
+# definición de colores
+color.map<-colorRampPalette(c("red","white","blue"))
+color.pop<-colData(dds)$population
+col2<-c("blue","red")
+names_col2<-names(table(colData(dds)$population))
+for(i in 1:3){
+  color.pop<-gsub(paste("",names_col2[i],sep=""),col2[i],color.pop)
+}
+
+# HeatMap
+heatmap(sel, Rowv=dendograma_genes, Colv = dendograma_muestras, margin=c(12,12),
+        cexRow = 0.5, col=color.map(30), lwd=4, labCol = F, ColSideColors = color.pop, main="HEATMAP")
+legend("topright", legend=c("CEU", "YRI"),
+       col=c("blue","red"), lty=1, lwd=8)
+```
+
+Se utiliza el ***paquete limma*** que ofrece la función ***voom()***, que transforma los recuentos de lectura en ***logCPM*** teniendo en cuenta la relación de la media y varianza de datos. Se crea una matriz de diseño para los grupos poblacionales para posteriormente testar o comparar las diferencias entre grupos étnicos. ***Voom*** estima la tendencia de la varianza respecto a la media en el *"counting.data"*, con el objetivo de asignar un peso a cada observación según la predicción de la varianza. Los pesos se utilizan posteriormente en el modelo lineal para ajustar la heterocedasticidad. Ajusta automáticamente los *"library size"* usando los *"norm.factors"* calculados. Se produce un objeto *"Elist"*, y se genera un gráfico de la tendencia de media-varianza, que informa sobre si hay algún gen con elevada variabilidad, y si se han filtrado los bajos recuentos correctamente.Se comprueba normalidad, y se procede a realizar ***"testing for differential expression"***. Se ajusta un modelo lineal para cada gen utilizando la función ***"lmFit()"***. Se pretende obtener los genes diferencialmente expresados entre grupos poblacionales. La H0 es que no hay diferencias de expresión, la H1 que sí las hay entre ambos grupos étnicos. Se realiza el **contraste** comprobando una expresión diferencial de genes entre grupos poblacionales. Finalmente se obtiene **Toptable**.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+population<-sampleinfo$population
+design <- model.matrix(~ 0 + population)
+head(design)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+par(mfrow=c(1,1))
+v <- voom(y,design,plot = TRUE)
+par(mfrow=c(1,2))
+boxplot(logcounts, xlab="", ylab="Log2 counts per million",las=2,main="No normalised logCPM")
+## Let's add a blue horizontal line that corresponds to the median logCPM
+abline(h=median(logcounts),col="blue")
+boxplot(v$E, xlab="", ylab="Log2 counts per million",las=2,main="Voom transformed logCPM")
+## Let's add a blue horizontal line that corresponds to the median logCPM
+abline(h=median(v$E),col="blue")
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+colnames(design) <- levels(population)
+fit <- lmFit(v) # Fit the linear model
+head(design)
+cont.matrix <- makeContrasts(CEUvsYRI=CEU-YRI,levels=design)
+cont.matrix
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+fit.cont <- contrasts.fit(fit, cont.matrix)
+fit.cont <- eBayes(fit.cont)
+summa.fit <- decideTests(fit.cont)
+summary(summa.fit)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+topTable(fit.cont,coef="CEUvsYRI",sort.by="p")
+```
+
+## 4.7. Análisis de significación biológica (*"Gene Enrichment Analysis"*)
+
+Utilizando las anotaciones generadas previamente, se puede realizar un análisis de significación biológica, tanto a nivel de "Gene Ontology" (GO) como respecto a los "Procesos Biológicos" (BP) en los que están implicados los genes diferencialmente expresados. Se utiliza la anotación de genoma humano basado en el mapeo (org.Hs.eg.db) utilizando identificadores de genes de Entrez. Es importante tener en cuenta que los genes comienzan por "ENSG" y por tanto la "keytype" correspondiente es "ENSEMBL". Adjunto resultado. Se realiza representación gráfica mediante "barplot", “dotplot”, “emapplot” y “plotGOgraph” donde destaca la implicación de los genes diferencialmente expresados en procesos metabólicos, especialmente su implicación en el metabolismo del nitrógeno, regulación metabólica, biosíntesis, y autofagia, por ejemplo. 
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE} 
+library(clusterProfiler)
+library(org.Hs.eg.db)
+OrgDb<-org.Hs.eg.db
+gene<-as.character(na.omit(anotacion$entrezgene_id))
+GO<-clusterProfiler::groupGO(gene=gene,
+                                OrgDb=OrgDb,
+                                ont="BP",
+                                level=3,
+                                readable = TRUE)
+summary(GO)
+BP<-clusterProfiler::enrichGO(gene=gene,
+                                OrgDb=OrgDb,
+                                ont="BP",
+                                pAdjustMethod = "BH",
+                                pvalueCutoff = 0.05,
+                                qvalueCutoff = 0.05,
+                                readable = TRUE)
+summary(BP)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE} 
+barplot(GO, drop=T)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE} 
+barplot(BP, drop=T)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE} 
+dotplot(BP)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE}
+emapplot(BP)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, eval=TRUE} 
+plotGOgraph(BP)
+```
+
+
+# 5. DISCUSIÓN
+
+Desde el punto de vista del estudio, realmente son dos estudios independientes, lo que lleva una variabilidad implícita, efecto batch. Sí que los grupos presentan un tamaño similar, 60 y 69 muestras, con réplicas distintas 1 y 2 respectivamente, y se trata de comparar y comprobar que existen diferencias en la expresión diferencial de genes, más evidente en el grupo africano de origen nigeriano como se comenta en apartados anteriores. Este dato puede ser de utilidad en estudios evolutivos, y desde el punto de vista clínico para estudiar la expresión diferencial de genes en la patogénesis de enfermedades según el grupo étnico.
+
+
+# 6. CONCLUSIÓN
+
+Se concluye una posible expresión diferencial de genes entre poblaciores caucásica y africana, de posible interés patogénico y antropológico.

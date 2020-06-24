@@ -1,0 +1,874 @@
+---
+title: "Pipeline estándar: otros datos genómicos"
+author: "Mª Araceli Hernández Betancor"
+date: "24/6/2020"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    keep_tex: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE, echo=F, warning= F, message=F}
+knitr::opts_chunk$set(message = FALSE, 
+                      warning = FALSE, 
+                      error = FALSE, 
+                      tidy = FALSE,
+                      fig.align="center", 
+                      dpi = 150, 
+                      cache = FALSE,
+                      progress=FALSE, 
+                      quite = TRUE)
+```
+
+```{r echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE, include=TRUE}
+require(TCGAWorkflowData)
+require(DT)
+require(TCGAbiolinks)
+require(AnnotationHub)
+require(ChIPSeeker)
+require(ComplexHeatmap)
+require(pathview)
+require(ELMER)
+require(gaia)
+require(minet)
+require(RTCGAToolbox)
+require(GenomicDataCommons)
+require(SummarizedExperiment)
+```
+
+
+## Introducción
+
+El análisis bioinformático y estadístico de datos de mRNA es un campo en desarrollo, con un avance notable en los últimos años. Encontrar *datasets* para entrenamiento para principiantes no es sencillo. Probablemente uno de los campos en los que más se ha investigado es la patología oncológica. Por ese motivo, para el desarrollo de este *pipeline* se ha intentado reproducir el *workflow* para Bioconductor planteado por Tiago C. Silva *et al.* 
+
+En el artículo se hace mención a tres grandes repositorios **TCGA**, **ENCODE** y **Roadmap**.
+
+- **TCGA**: es el acrónimo de *The Cancer Genome Atlas*, un ambicioso proyecto promovido a partir del año 2005 por el *National Cancer Institute* y *National Human Genome Research Institute* en la lucha contra el cáncer. Se trata de un catálogo de alteraciones biológicas relacionadas con el desarrollo de procesos oncológicos mediante la aplicación de la secuenciación genómica y el análisis bioinformático de datos. Busca el diagnóstico y tratamiento precoz, así como la prevención de procesos oncológicos a través de la comprensión de las modificaciones genéticas implicadas en su desarrollo. Dispone de información de más de 10.000 tumores relacionados con distinto tipo de procesos neoplásicos de distinta localización. 
+
+- **ENCODE**: es la *Encyclopedia of DNA Elements* para el seguimiento del *Proyecto Genoma Humano*. ENCODE busca identificar los elementos funcionales del genoma gumano. Promovido por el NHGRI *(National Human Genome Research Institute)* en 2003, actualmente implica a grupos de investigación de todo el mundo, con una amplia base de datos de acceso público.
+
+- **NIH Roadmap Epigenomics Project**: este proyecto pretende generar una base de datos de epigenomas humanos de referencia de individuos sanos a través de distintas líneas celulares, células y tejidos primarios. Estos datos son accesibles mediante el *Human Epigenome Atlas*. Se analiza el epigenoma desde diferentes perspectivas, asi como su expresión génica: Chip-Seq en el análisis de modificación de histonas, metilación de DNA, DNA-seq y accesibilidad de cromatina, expresión génica (RNA-seq como mRNA, expresión de arrays), y expresión de small-RNA (smRNA-Seq). En este último punto entraría el análisis de micro o mi-RNA.
+
+A continuación utilizando el programa Bioconductor empleado durante el Máster para el análisis de datos ómicos, se intenta reproducir el *workflow* desarrollado en el artículo (<https://f1000research.com/articles/5-1542/v2>). Este artículo sigue un esquema similar al utilizado en las prácticas de la asignatura de Análisis de Datos Ómicos, desde la descarga del *dataset*, procesamiento y análisis para responder a la pregunta biológica inicial, y discutir sobre la posible significación biológica de los resultados obtenidos.
+
+Antes de iniciar la desacarga del conjunto de datos se instalaron los paquetes necesarios del proyecto Bioconductor que se cargan al inicio del fichero .Rmd.
+
+
+## Descarga de *dataset*
+
+Se descarga el conjunto de datos de *TCGA* utilizando el paquete de Bioconductor "TCGAbiolinks". Como se realiza en el estudio planteado se utilizan las funciones *GDCquery()*, *GDCdownload()* y *GDCprepare()* para la búsqueda, descarga y preparación de los datos, como su nombre indica. Con la primera función se busca mediante la GDC API la información de un proyecto concreto, obteniéndose un objeto con una tabla resumen, información que se descarga con la segunda función y se guarda en un directorio. Finalmente con la tercera función se preparan los datos para su uso.
+
+```{r eval=FALSE, include=TRUE}
+# Datos alineados a hg19
+library(TCGAbiolinks)
+query.met.gbm <- GDCquery(project = "TCGA-GBM",
+                          legacy = TRUE,
+                          data.category = "DNA methylation",
+                          platform = "Illumina Human Methylation 450",
+                          barcode = c("TCGA-76-4926-01B-01D-1481-05", "TCGA-28-5211-01C-11D-1844-05"))
+
+GDCdownload(query.met.gbm)
+ 
+met.gbm.450 <- GDCprepare(query = query.met.gbm,
+                          save = TRUE,
+                          save.filename = "gbmDNAmet450k.rda",
+                          summarizedExperiment = TRUE)
+
+query.met.lgg <- GDCquery(project = "TCGA-LGG",
+                          legacy = TRUE,
+                          data.category = "DNA methylation",
+                          platform = "Illumina Human Methylation 450",
+                          barcode = c("TCGA-HT-7879-01A-11D-2399-05", "TCGA-HT-8113-01A-11D-2399-05"))
+
+GDCdownload(query.met.lgg)
+
+met.lgg.450 <- GDCprepare(query = query.met.lgg,
+                          save = TRUE,
+                          save.filename = "lggDNAmet450k.rda",
+                          summarizedExperiment = TRUE)
+
+met.gbm.lgg <- SummarizedExperiment::cbind(met.lgg.450, met.gbm.450)
+
+query.exp.lgg <- GDCquery(project = "TCGA-LGG",
+                          legacy = TRUE,
+                          data.category = "Gene expression",
+                          data.type = "Gene expression quantification",
+                          platform = "Illumina HiSeq",
+                          file.type = "results",
+                          sample.type = "Primary solid Tumor")
+
+GDCdownload(query.exp.lgg)
+
+exp.lgg <- GDCprepare(query = query.exp.lgg, save = TRUE, save.filename = "lggExp.rda")
+
+query.exp.gbm <- GDCquery(project = "TCGA-GBM",
+                          legacy = TRUE,
+                          data.category = "Gene expression",
+                          data.type = "Gene expression quantification",
+                          platform = "Illumina HiSeq",
+                          file.type = "results",
+                          sample.type = "Primary solid Tumor")
+
+GDCdownload(query.exp.gbm)
+
+exp.gbm <- GDCprepare(query = query.exp.gbm, 
+                      save = TRUE, 
+                      save.filename = "gbmExp.rda")
+
+exp.gbm.lgg <- SummarizedExperiment::cbind(exp.lgg, exp.gbm)
+```
+
+```{r eval=FALSE, include=TRUE}
+# Copy number variation, alineado a hg38
+query <- GDCquery(project = "TCGA-ACC",
+                  data.category = "Copy Number Variation",
+                  data.type = "Copy Number Segment",
+                  barcode = c( "TCGA-OR-A5KU-01A-11D-A29H-01", "TCGA-OR-A5JK-01A-11D-A29H-01"))
+
+GDCdownload(query)
+
+data <- GDCprepare(query)
+ 
+query <- GDCquery("TCGA-ACC",
+                  "Copy Number Variation",
+                  data.type = "Masked Copy Number Segment",
+                  sample.type = c("Primary solid Tumor")) 
+
+getResults(query)$cases # barcodes
+
+GDCdownload(query)
+
+data <- GDCprepare(query)
+```
+
+
+## Exploración y análisis de los datos
+
+A continuación se procede a la exploración de los datos (paciente, *batch*, tipo de muestra, etc.).
+
+```{r eval=TRUE, include=TRUE}
+library(SummarizedExperiment)
+
+# Se carga objeto con paquete TCGAWorkflowData
+
+data(GBMIllumina_HiSeq) 
+
+# Matrix de expresión
+data <- assay(gbm.exp)
+datatable(data[1:10,], 
+          options = list(scrollX = TRUE, keys = TRUE, pageLength = 5), 
+          rownames = TRUE)
+
+# Información de genes
+genes.info <- rowRanges(gbm.exp)
+genes.info
+
+# Información de muestras
+sample.info <- colData(gbm.exp)
+datatable(as.data.frame(sample.info), 
+          options = list(scrollX = TRUE, keys = TRUE, pageLength = 5), 
+          rownames = FALSE)
+```
+
+```{r eval=TRUE, include=TRUE}
+# Datos de identificación del paciente clínico para muestras GBM
+gbm_clin <- GDCquery_clinic(project = "TCGA-GBM", type = "Clinical")
+
+# Datos de identificación del paciente clínico para muestras LGG
+lgg_clin <- GDCquery_clinic(project = "TCGA-LGG", type = "Clinical")
+
+# Unión de resultados
+clinical <- plyr::rbind.fill(gbm_clin,lgg_clin)
+```
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+datatable(clinical[1:10,], options = list(scrollX = TRUE, keys = TRUE), rownames = FALSE)
+```
+
+```{r echo=TRUE, results = 'hide', message=FALSE, warning=FALSE}
+# Se obtienen datos clínicos de archivos XML.
+query <- GDCquery(project = "TCGA-GBM",
+                  file.type = "xml",
+                  data.category = "Clinical",
+                  barcode = c("TCGA-08-0516","TCGA-02-0317")) 
+GDCdownload(query)
+clinical <- GDCprepare_clinic(query, clinical.info = "patient")
+```
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+datatable(clinical, options = list(scrollX = TRUE, keys = TRUE), rownames = FALSE)
+```
+
+```{r echo=TRUE, results = 'hide', message=FALSE, warning=FALSE}
+clinical.drug <- GDCprepare_clinic(query, clinical.info = "drug")
+```
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+datatable(clinical.drug, options = list(scrollX = TRUE, keys = TRUE), rownames = FALSE)
+```
+
+```{r echo=TRUE, results = 'hide', message=FALSE, warning=FALSE}
+clinical.radiation <- GDCprepare_clinic(query, clinical.info = "radiation")
+```
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+datatable(clinical.radiation, options = list(scrollX = TRUE,  keys = TRUE), rownames = FALSE)
+```
+
+```{r echo=TRUE, results = 'hide', message=FALSE, warning=FALSE}
+clinical.admin <- GDCprepare_clinic(query, clinical.info = "admin")
+```
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+datatable(clinical.admin, options = list(scrollX = TRUE, keys = TRUE), rownames = FALSE)
+```
+
+```{r eval=FALSE, include=TRUE}
+LGGmut <- GDCquery_Maf(tumor = "LGG", pipelines = "mutect2")
+```
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+data(mafMutect2LGGGBM)
+datatable(LGGmut[1:10,], options = list(scrollX = TRUE, keys = TRUE), rownames = FALSE)
+```
+
+```{r eval=TRUE, include=TRUE}
+gbm.subtypes <- TCGAquery_subtype(tumor = "gbm")
+```
+
+```{r echo = TRUE, message = FALSE, warning = FALSE}
+datatable(gbm.subtypes[1:10,], options = list(scrollX = TRUE, keys = TRUE), rownames = FALSE)
+```
+
+```{r eval=FALSE, include=TRUE}
+library(RTCGAToolbox)
+# Se obtienen últimas fechas de ejecución
+lastRunDate <- getFirehoseRunningDates()[1]
+
+# Se consiguen datos de metilación de DNA, RNAseq2 y datos clínicos para GBM
+gbm.data <- getFirehoseData(dataset = "GBM",
+                            runDate = lastRunDate,
+                            gistic2Date = getFirehoseAnalyzeDates(1),
+                            Methylation = FALSE,
+                            clinical = TRUE,
+                            RNASeq2GeneNorm  = FALSE,
+                            Mutation = TRUE,
+                            fileSizeLimit = 10000)
+
+gbm.mut <- getData(gbm.data,"Mutation")
+gbm.clin <- getData(gbm.data,"clinical")
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+# Descargar resultados de GISTIC
+lastanalyzedate <- getFirehoseAnalyzeDates(1)
+gistic <- getFirehoseData("GBM",GISTIC = TRUE, gistic2Date = lastanalyzedate)
+
+# Conseguir resultados de GISTIC
+gistic.allbygene <- getData(gistic, type = "GISTIC", platform = "AllByGene")
+gistic.thresholedbygene <- getData(gistic, type = "GISTIC", platform = "ThresholdedByGene")
+```
+
+```{r eval=TRUE, message=FALSE, warning=FALSE, include=TRUE}
+data(GBMGistic)
+datatable(gistic.allbygene,
+          filter = 'top',
+          options = list(scrollX = TRUE, keys = TRUE, pageLength = 5), 
+          rownames = FALSE)
+datatable(gistic.thresholedbygene,
+          filter = 'top',
+          options = list(scrollX = TRUE, keys = TRUE, pageLength = 5), 
+          rownames = FALSE)
+```
+
+```{r results='hide', eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+library(TCGAbiolinks)
+
+# Pre-procesamiento datos CNV
+query.gbm.nocnv <- GDCquery(project = "TCGA-GBM",
+                            data.category = "Copy number variation",
+                            legacy = TRUE,
+                            file.type = "nocnv_hg19.seg",
+                            sample.type = c("Primary solid Tumor"))
+
+# Se seleccionan 20 muestras
+query.gbm.nocnv$results[[1]] <- query.gbm.nocnv$results[[1]][1:20,]
+
+GDCdownload(query.gbm.nocnv, files.per.chunk = 100)
+
+gbm.nocnv <- GDCprepare(query.gbm.nocnv, save = TRUE, save.filename = "GBMnocnvhg19.rda")
+```
+
+```{r results='hide', eval=FALSE, message=FALSE, warning=FALSE, include=TRUE}
+
+# Se recupera el metaarchivo de las sondas del sitio web Broadinstitute para hg19
+# https://gdc.cancer.gov/about-data/data-harmonization-and-generation/gdc-reference-files
+# File: SNP6 GRCh38 Liftover Probeset File for Copy Number Variation Analysis
+
+gdac.root <- "ftp://ftp.broadinstitute.org/pub/GISTIC2.0/hg19_support/"
+file <- paste0(gdac.root, "genome.info.6.0_hg19.na31_minus_frequent_nan_probes_sorted_2.1.txt")
+if(!file.exists(basename(file))) downloader::download(file, basename(file))
+markersMatrix <-  readr::read_tsv(basename(file), col_names = FALSE, col_types = "ccn", progress = FALSE)
+save(markersMatrix, file = "markersMatrix.rda", compress = "xz")
+```
+
+Se identifican amplificaciones y eliminaciones recurrentes para LGG y GBM, que se representan gráficamente a nivel cromosómico (-log10 p-valor corregido para amplificaciones, y log10 para eliminaciones). Se detectan regiones genómicas significativamente alteradas en el número de copias (genes amplificados y eliminados potencialmente relacionados con cáncer). 
+
+```{r gaia, echo=TRUE, message=FALSE,warning=FALSE, include=TRUE}
+cancer <- "GBM"
+message(paste0("Starting ", cancer))
+
+# Objetos creados
+data(GBMnocnvhg19)
+data(markersMatrix)
+
+# Añadir etiqueta (0 para loss, 1 para gain)
+cnvMatrix <- cbind(cnvMatrix,Label=NA)
+cnvMatrix[cnvMatrix[,"Segment_Mean"] < -0.3,"Label"] <- 0
+cnvMatrix[cnvMatrix[,"Segment_Mean"] > 0.3,"Label"] <- 1
+cnvMatrix <- cnvMatrix[!is.na(cnvMatrix$Label),]
+
+# Extraer "Segment_Mean" y cambiar col.names
+cnvMatrix <- cnvMatrix[,-6]
+colnames(cnvMatrix) <- c("Sample.Name", "Chromosome", "Start", "End", "Num.of.Markers", "Aberration")
+
+# Sustituir cromosomas "X" e "Y" con "23" y "24"
+cnvMatrix[cnvMatrix$Chromosome == "X","Chromosome"] <- 23
+cnvMatrix[cnvMatrix$Chromosome == "Y","Chromosome"] <- 24
+cnvMatrix$Chromosome <- as.integer(cnvMatrix$Chromosome)
+
+# Identificación recurrente CNV con GAIA
+colnames(markersMatrix) <- c("Probe.Name", "Chromosome", "Start")
+unique(markersMatrix$Chromosome)
+markersMatrix[markersMatrix$Chromosome == "X","Chromosome"] <- "23"
+markersMatrix[markersMatrix$Chromosome == "Y","Chromosome"] <- "24"
+markersMatrix$Chromosome <- as.integer(markersMatrix$Chromosome)
+markerID <- paste(markersMatrix$Chromosome,markersMatrix$Start, sep = ":")
+
+# Eliminar duplicados
+markersMatrix <- markersMatrix[!duplicated(markerID),]
+# Filtrar markersMatrix para CNV comunes
+markerID <- paste(markersMatrix$Chromosome,markersMatrix$Start, sep = ":")
+
+file <- "ftp://ftp.broadinstitute.org/pub/GISTIC2.0/hg19_support/CNV.hg19.bypos.111213.txt"
+if(!file.exists(basename(file))) downloader::download(file, basename(file))
+commonCNV <- readr::read_tsv(basename(file), progress = FALSE)
+
+# Datos(CNV.hg19.bypos.111213)
+commonID <- paste(commonCNV$Chromosome,commonCNV$Start, sep = ":")
+markersMatrix_fil <- markersMatrix[!markerID %in% commonID,]
+
+library(gaia)
+set.seed(200)
+markers_obj <- load_markers(as.data.frame(markersMatrix_fil))
+nbsamples <- length(unique(cnvMatrix$Sample))
+cnv_obj <- load_cnv(cnvMatrix, markers_obj, nbsamples)
+suppressWarnings({
+  results <- runGAIA(cnv_obj,
+                     markers_obj,
+                     output_file_name = paste0("GAIA_",cancer,"_flt.txt"),
+                     aberrations = -1,  # -1 a todas las aberraciones
+                     chromosomes = 9, # -1 a todos los cromosomas
+                     approximation = TRUE,
+                     num_iterations = 5000,
+                     threshold = 0.25)
+})
+
+# Colocar q-value threshold
+threshold <- 0.3
+
+# Plot de resultados
+RecCNV <- t(apply(results,1,as.numeric))
+colnames(RecCNV) <- colnames(results)
+RecCNV <- cbind(RecCNV, score = 0)
+minval <- format(min(RecCNV[RecCNV[,"q-value"] != 0,"q-value"]), scientific = FALSE)
+minval <- substring(minval,1, nchar(minval) - 1)
+RecCNV[RecCNV[,"q-value"] == 0,"q-value"] <- as.numeric(minval)
+RecCNV[,"score"] <- sapply(RecCNV[,"q-value"],function(x) -log10(as.numeric(x)))
+RecCNV[RecCNV[,"q-value"] == as.numeric(minval),]
+
+gaiaCNVplot(RecCNV,threshold)
+save(results, RecCNV, threshold, file = paste0(cancer,"_CNV_results.rda"))
+```
+
+```{r echo = FALSE, eval = TRUE, message=FALSE,warning=FALSE, include=FALSE}
+library(GenomicRanges)
+```
+
+```{r echo=TRUE, results='hide', message=FALSE, warning=FALSE, eval = FALSE}
+library(maftools)
+
+# Descargar archivos MAF (Mutation Annotation Format)
+LGGmut <- GDCquery_Maf(tumor = "LGG", pipelines = "mutect2")
+GBMmut <- GDCquery_Maf(tumor = "GBM", pipelines = "mutect2")
+
+# Se fusionan
+mut <- plyr::rbind.fill(LGGmut, GBMmut)
+save(maf=mut,file ="mafMutect2LGGGBM.rda", compress = "xz")
+```
+
+```{r echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+library(maftools)
+
+# Se recuperan datos del paquete TCGAWorkflowData
+data(mafMutect2LGGGBM)
+
+# Se preparan maftools incluyendo datos clínicos
+# Un mutante vs análisis de supervivencia WT 
+# Conseguir datos de pacientes clínicos identificados para muestras GBM
+gbm_clin <- GDCquery_clinic(project = "TCGA-GBM", type = "Clinical")
+# Conseguir datos de pacientes clínicos identificados para muestras LGG
+lgg_clin <- GDCquery_clinic(project = "TCGA-LGG", type = "Clinical")
+
+# Fusión de resultados
+clinical <- plyr::rbind.fill(gbm_clin,lgg_clin)
+colnames(clinical)[1] <- "Tumor_Sample_Barcode"
+clinical$Overall_Survival_Status <- 1
+clinical$Overall_Survival_Status[which(clinical$vital_status != "dead")] <- 0
+clinical$time <- clinical$days_to_death
+clinical$time[is.na(clinical$days_to_death)] <- clinical$days_to_last_follow_up[is.na(clinical$days_to_death)]
+
+# Se genera objeto para usar en maftools
+maf <- read.maf(maf = mut, clinicalData = clinical, isTCGA = T)
+```
+
+Se representa un resumen gráfico:
+
+```{r echo=TRUE, message=FALSE, warning=FALSE,fig.width=10}
+plotmafSummary(maf = maf,
+               rmOutlier = TRUE,
+               addStat = 'median',
+               dashboard = TRUE)
+```
+
+El objeto maf generado por read.maf se puede dibujar con la función *oncoplot()*.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE,fig.height=10,fig.width=15,eval=FALSE}
+oncoplot(maf = maf,
+         top = 20,
+         legendFontSize = 8,
+         clinicalFeatures = c("tissue_or_organ_of_origin"))
+```
+
+Mediante la función *mafSurvival()* se puede mostrar la representación gráfica del análisis de supervivencia agrupando muestras de maf en función del estado de mutación de un gen o grupos dados o agrupando manualmente las muestras.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+plot <- mafSurvival(maf = maf,
+                   genes = "IDH1",
+                   fn = NULL,
+                   time = 'time',
+                   Status = 'Overall_Survival_Status',
+                   isTCGA = TRUE)
+```
+
+```{r echo=TRUE, results='hide', eval = FALSE, message=FALSE,warning=FALSE}
+LGGmut <- GDCquery_Maf(tumor = "LGG", pipelines = "mutect2")
+```
+
+Las alteraciones genéticas en cromosomas determinados o todo el genoma (CNV, mutaciones) se pueden representar mediante *circos plot* gráficamente. Con el paquete GAIA se obtienen CNV significativos, que se muestran con las mutaciones recurrentes, resultado de variaciones genéticas tratadas recuperadas de TCGA, presentes en al menos dos muestras de tumores en LGG.
+
+```{r echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+# Resumen de aberración genómica (Circos plot)
+
+# Recuperación de mutaciones tratadas para cáncer seleccionado 
+data(mafMutect2LGGGBM)
+
+# Selección de mutaciones potencialmente dañinas
+LGGmut <- LGGmut[LGGmut$Variant_Classification %in% c("Missense_Mutation",
+                                                      "Nonsense_Mutation",
+                                                      "Nonstop_Mutation",
+                                                      "Frame_Shift_Del",
+                                                      "Frame_Shift_Ins"),]
+
+# Seleccionar mutaciones recurrentes en al menos dos muestras
+mut.id <- paste0(LGGmut$Chromosome,":",LGGmut$Start_Position,"-",LGGmut$End_Position,"|",LGGmut$Reference_Allele)
+mut <- cbind(mut.id, LGGmut)
+
+# Preparar datos de mutaciones seleccionadas para circos plot
+s.mut <- mut[mut$mut.id %in% unique(mut.id[duplicated(mut.id)]),]
+s.mut <- s.mut[,c("Chromosome","Start_Position","End_Position","Variant_Classification","Hugo_Symbol")]
+s.mut <- unique(s.mut)
+typeNames <- unique(s.mut[,4])
+type <- c(4:1)
+names(type) <- typeNames[1:4]
+Type <- type[s.mut[,4]]
+s.mut <- cbind(s.mut,Type)
+s.mut <- s.mut[,c(1:3,6,4,5)]
+
+# Cargar datos CNV recurrentes para cáncer seleccionado
+load("GBM_CNV_results.rda")
+
+# Preparar datos CNV de muestra seleccionada para circos plot
+s.cnv <- as.data.frame(RecCNV[RecCNV[,"q-value"] <= threshold,c(1:4,6)])
+s.cnv <- s.cnv[,c(1,3,4,2)]
+s.cnv[s.cnv$Chromosome == 23,"Chromosome"] <- "X"
+s.cnv[s.cnv$Chromosome == 24,"Chromosome"] <- "Y"
+Chromosome <- paste0("chr",s.cnv[,1])
+s.cnv <- cbind(Chromosome, s.cnv[,-1])
+s.cnv[,1] <- as.character(s.cnv[,1])
+s.cnv[,4] <- as.character(s.cnv[,4])
+s.cnv <- cbind(s.cnv,CNV=1)
+colnames(s.cnv) <- c("Chromosome","Start_position","End_position","Aberration_Kind","CNV")
+
+library(circlize)
+
+# Dibujar circos plot genómicos
+par(mar=c(1,1,1,1), cex=1)
+circos.initializeWithIdeogram()
+
+# Añadir resultados CNV
+colors <- c("forestgreen","firebrick")
+names(colors)  <- c(0,1)
+circos.genomicTrackPlotRegion(s.cnv,  ylim = c(0,1.2),
+                              panel.fun = function(region, value, ...) {
+                                circos.genomicRect(region, value, ytop.column = 2, ybottom = 0,
+                                                   col = colors[value[[1]]], 
+                                                   border="white")
+                                cell.xlim = get.cell.meta.data("cell.xlim")
+                                circos.lines(cell.xlim, c(0, 0), lty = 2, col = "#00000040")
+                              })
+
+# Añadir resultados de mutación
+colors <- c("blue","green","red","gold")
+names(colors)  <- typeNames[1:4]
+circos.genomicTrackPlotRegion(s.mut, ylim = c(1.2,4.2),
+                              panel.fun = function(region, value, ...) {
+                                circos.genomicPoints(region, value, cex = 0.8, pch = 16, col = colors[value[[2]]], ...)
+                              })
+
+circos.clear()
+
+legend(-0.2, 0.2, bty="n", y.intersp=1, c("Amp","Del"), pch=15, 
+       col=c("firebrick","forestgreen"), title="CNVs", text.font=1, cex=0.4, title.adj=0)
+legend(-0.2, 0, bty="n", y.intersp=1, names(colors), pch=16, 
+       col=colors, title="Mutations", text.font=1, cex=0.4, title.adj=0)
+```
+
+```{r echo=TRUE, results='asis', message=FALSE,warning=FALSE}
+
+par(mar=c(1,1,1,1),cex=1.5)
+circos.par("start.degree" = 90, canvas.xlim = c(0, 1), canvas.ylim = c(0, 1), 
+           gap.degree = 270, cell.padding = c(0, 0, 0, 0), track.margin = c(0.005, 0.005))
+circos.initializeWithIdeogram(chromosome.index = "chr17")
+circos.par(cell.padding = c(0, 0, 0, 0))
+
+# Añadir resultados CNV
+colors <- c("forestgreen","firebrick")
+names(colors)  <- c(0,1)
+circos.genomicTrackPlotRegion(s.cnv,  ylim = c(0,1.2),
+                              panel.fun = function(region, value, ...) {
+                                circos.genomicRect(region, value, ytop.column = 2, ybottom = 0,
+                                                   col = colors[value[[1]]], 
+                                                   border="white")
+                                cell.xlim = get.cell.meta.data("cell.xlim")
+                                circos.lines(cell.xlim, c(0, 0), lty = 2, col = "#00000040")
+                              })
+
+# Añadir resultados de mutación que representen genes individuales
+genes.mut <- paste0(s.mut$Hugo_Symbol,"-",s.mut$Type)
+s.mutt <- cbind(s.mut,genes.mut)
+n.mut <- table(genes.mut)
+idx <- !duplicated(s.mutt$genes.mut)
+s.mutt <- s.mutt[idx,]
+s.mutt <- cbind(s.mutt,num=n.mut[s.mutt$genes.mut])
+genes.num <- paste0(s.mutt$Hugo_Symbol," (",s.mutt$num.Freq,")")
+s.mutt <- cbind(s.mutt[,-c(6:8)],genes.num)
+s.mutt[,6] <- as.character(s.mutt[,6])
+s.mutt[,4] <- s.mutt[,4]/2
+s.mutt$num.Freq <- NULL
+colors <- c("blue","green","red","gold")
+names(colors)  <- typeNames[1:4]
+circos.genomicTrackPlotRegion(s.mutt, ylim = c(0.3,2.2), track.height = 0.05,
+                              panel.fun = function(region, value, ...) {
+                                circos.genomicPoints(region, value, cex = 0.4, pch = 16, col = colors[value[[2]]], ...)
+                              })
+
+circos.genomicTrackPlotRegion(s.mutt, ylim = c(0, 1), track.height = 0.1, bg.border = NA)
+i_track = get.cell.meta.data("track.index")
+
+circos.genomicTrackPlotRegion(s.mutt, ylim = c(0,1),
+                              panel.fun = function(region, value, ...) {
+                                circos.genomicText(region, value, 
+                                                   y = 1, 
+                                                   labels.column = 3,
+                                                   col = colors[value[[2]]],
+                                                   facing = "clockwise", adj = c(1, 0.5),
+                                                   posTransform = posTransform.text, cex = 0.4, niceFacing = TRUE)
+                              }, track.height = 0.1, bg.border = NA)
+
+circos.genomicPosTransformLines(s.mutt,
+                                posTransform = function(region, value)
+                                  posTransform.text(region, 
+                                                    y = 1, 
+                                                    labels = value[[3]],
+                                                    cex = 0.4, track.index = i_track+1),
+                                direction = "inside", track.index = i_track)
+
+circos.clear()
+
+legend(0.25, 0.2, bty="n", y.intersp=1, c("Amp","Del"), pch=15, 
+       col=c("firebrick","forestgreen"), title="CNVs", text.font=1, cex=0.4, title.adj=0)
+legend(0, 0.2, bty="n", y.intersp=1, names(colors), pch=16, 
+       col=colors, title="Mutations", text.font=1, cex=0.4, title.adj=0)
+```
+
+```{r eval=FALSE, include=TRUE}
+query <- GDCquery(project = "TCGA-GBM",
+                  data.category = "Gene expression",
+                  data.type = "Gene expression quantification",
+                  platform = "Illumina HiSeq",
+                  file.type  = "results",
+                  sample.type = c("Primary solid Tumor"),
+                  legacy = TRUE)
+
+# Se seleccionan 20 muestras
+query$results[[1]] <-  query$results[[1]][1:20,]
+GDCdownload(query)
+gbm.exp <- GDCprepare(query,
+                      save = TRUE,
+                      summarizedExperiment = TRUE,
+                      save.filename = "GBMIllumina_HiSeq.rda")
+ 
+query <- GDCquery(project = "TCGA-LGG",
+                  data.category = "Gene expression",
+                  data.type = "Gene expression quantification",
+                  platform = "Illumina HiSeq",
+                  file.type  = "results",
+                  sample.type = c("Primary solid Tumor"),
+                  legacy = TRUE)
+
+# Se seleccionan 20 muestras
+query$results[[1]] <-  query$results[[1]][1:20,]
+GDCdownload(query)
+lgg.exp <- GDCprepare(query,
+                      save = TRUE,
+                      summarizedExperiment = TRUE,
+                      save.filename = "LGGIllumina_HiSeq.rda")
+```
+
+```{r echo=TRUE, results='asis', message=FALSE,warning=FALSE}
+data("LGGIllumina_HiSeq")
+data("GBMIllumina_HiSeq")
+
+dataPrep_LGG <- TCGAanalyze_Preprocessing(object = lgg.exp,
+                                          cor.cut = 0.6,    
+                                          datatype = "raw_count",
+                                          filename = "LGG_IlluminaHiSeq_RNASeqV2.png")
+
+dataPrep_GBM <- TCGAanalyze_Preprocessing(object = gbm.exp,
+                                          cor.cut = 0.6, 
+                                          datatype = "raw_count",
+                                          filename = "GBM_IlluminaHiSeq_RNASeqV2.png")
+
+dataNorm <- TCGAanalyze_Normalization(tabDF = cbind(dataPrep_LGG, dataPrep_GBM),
+                                      geneInfo = TCGAbiolinks::geneInfo,
+                                      method = "gcContent") #18323   672
+
+dataFilt <- TCGAanalyze_Filtering(tabDF = dataNorm,
+                                  method = "quantile",
+                                  qnt.cut =  0.25)  # 13742   672
+
+save(dataFilt, file = paste0("LGG_GBM_Norm_IlluminaHiSeq.rda"))
+
+dataFiltLGG <- subset(dataFilt, select = substr(colnames(dataFilt),1,12) %in% lgg_clin$bcr_patient_barcode)
+dataFiltGBM <- subset(dataFilt, select = substr(colnames(dataFilt),1,12) %in% gbm_clin$bcr_patient_barcode)
+
+dataDEGs <- TCGAanalyze_DEA(mat1 = dataFiltLGG,
+                            mat2 = dataFiltGBM,
+                            Cond1type = "LGG",
+                            Cond2type = "GBM",
+                            fdr.cut = 0.01 ,
+                            logFC.cut = 1,
+                            method = "glmLRT")
+```
+
+Se puede conocer el número de genes diferencialmente expresados:
+
+```{r results='asis', echo=TRUE, message=FALSE,warning=FALSE}
+
+# Número de genes diferencialmente expresados (DEG)
+nrow(dataDEGs)
+```
+
+## Análisis de enriquecimiento
+
+A continuación se representa gráficamente el análisis de enriquecimiento a partir de los datos obtenidos.
+
+```{r echo=TRUE, results='hide', message=FALSE,warning=FALSE,fig.height=10, fig.width=10}
+# Análisis de enriquecimiento          --------------------
+ansEA <- TCGAanalyze_EAcomplete(TFname="DEA genes LGG Vs GBM", RegulonList = rownames(dataDEGs))
+TCGAvisualize_EAbarplot(tf = rownames(ansEA$ResBP),
+                        filename = NULL,
+                        GOBPTab = ansEA$ResBP, 
+                        nRGTab = rownames(dataDEGs),
+                        nBar = 20)
+```
+
+```{r echo=TRUE, results='hide', message=FALSE,warning=FALSE,fig.height=10, fig.width=10}
+TCGAvisualize_EAbarplot(tf = rownames(ansEA$ResBP),
+                        filename = NULL,
+                        GOCCTab = ansEA$ResCC,
+                        nRGTab = rownames(dataDEGs),
+                        nBar = 20)
+```
+
+```{r echo=TRUE, results='hide', message=FALSE,warning=FALSE,fig.height=10, fig.width=10}
+TCGAvisualize_EAbarplot(tf = rownames(ansEA$ResBP),
+                        filename = NULL,
+                        GOMFTab = ansEA$ResMF, 
+                        nRGTab = rownames(dataDEGs),
+                        nBar = 20)
+```
+
+```{r echo=TRUE, results='hide', message=FALSE,warning=FALSE,fig.height=12, fig.width=15}
+TCGAvisualize_EAbarplot(tf = rownames(ansEA$ResBP),
+                        filename = NULL,
+                        PathTab = ansEA$ResPat,
+                        nRGTab = rownames(dataDEGs),
+                        nBar = 20)
+```
+
+```{r echo=TRUE, results='asis', message=FALSE,warning=FALSE}
+library(SummarizedExperiment)
+GenelistComplete <- rownames(assay(lgg.exp,1))
+
+# TopTable de DEG
+dataDEGsFiltLevel <- TCGAanalyze_LevelTab(dataDEGs,"LGG","GBM",
+                                          dataFilt[,colnames(dataFiltLGG)],
+                                          dataFilt[,colnames(dataFiltGBM)])
+
+dataDEGsFiltLevel$GeneID <- 0
+
+library(clusterProfiler)
+
+# Convertir "Gene symbol" a "geneID"
+eg = as.data.frame(bitr(dataDEGsFiltLevel$mRNA,
+                        fromType="SYMBOL",
+                        toType="ENTREZID",
+                        OrgDb="org.Hs.eg.db"))
+eg <- eg[!duplicated(eg$SYMBOL),]
+
+dataDEGsFiltLevel <- dataDEGsFiltLevel[dataDEGsFiltLevel$mRNA %in% eg$SYMBOL,]
+
+dataDEGsFiltLevel <- dataDEGsFiltLevel[order(dataDEGsFiltLevel$mRNA,decreasing=FALSE),]
+eg <- eg[order(eg$SYMBOL,decreasing=FALSE),]
+
+# table(eg$SYMBOL == dataDEGsFiltLevel$mRNA) debería ser TRUE
+all(eg$SYMBOL == dataDEGsFiltLevel$mRNA)
+dataDEGsFiltLevel$GeneID <- eg$ENTREZID
+
+dataDEGsFiltLevel_sub <- subset(dataDEGsFiltLevel, select = c("GeneID", "logFC"))
+genelistDEGs <- as.numeric(dataDEGsFiltLevel_sub$logFC)
+names(genelistDEGs) <- dataDEGsFiltLevel_sub$GeneID
+library(pathview)
+# pathway.id: hsa05214 es el pathway del glioma
+hsa05214 <- pathview::pathview(gene.data  = genelistDEGs,
+                               pathway.id = "hsa05214",
+                               species    = "hsa",
+                               limit = list(gene=as.integer(max(abs(genelistDEGs)))))
+```
+
+```{r eval=FALSE, include=TRUE}
+file <- "http://thebiogrid.org/downloads/archives/Release%20Archive/BIOGRID-3.4.146/BIOGRID-ALL-3.4.146.tab2.zip"
+if(!file.exists(gsub("zip","txt",basename(file)))){
+  downloader::download(file,basename(file))
+  unzip(basename(file),junkpaths =TRUE)
+  }
+ 
+tmp.biogrid <- read.csv(gsub("zip","txt",basename(file)), header=TRUE, sep="\t", stringsAsFactors=FALSE)
+```
+
+```{r eval=FALSE, include=TRUE}
+#  DNA metilación
+#  Muestras
+lgg.samples <- matchedMetExp("TCGA-LGG", n = 10)
+gbm.samples <- matchedMetExp("TCGA-GBM", n = 10)
+samples <- c(lgg.samples,gbm.samples)
+
+query <- GDCquery(project = c("TCGA-LGG","TCGA-GBM"),
+                  data.category = "DNA methylation",
+                  platform = "Illumina Human Methylation 450",
+                  legacy = TRUE,
+                  barcode = samples)
+
+GDCdownload(query)
+
+met <- GDCprepare(query, save = FALSE)
+
+# Se realiza para cromosoma 9
+met <- subset(met,subset = as.character(seqnames(met)) %in% c("chr9"))
+```
+
+```{r echo=TRUE, message=FALSE,warning=FALSE, fig.height=8,fig.width=8}
+data(elmerExample) # información disponible en paquete ELMER
+
+# Metilación media
+
+# Plot para grupos de la columna enfermedad del objeto summarizedExperiment
+
+# Eliminar sondas NA 
+met <- subset(met,subset = (rowSums(is.na(assay(met))) == 0))
+
+TCGAvisualize_meanMethylation(met,
+                              groupCol = "project_id",
+                              group.legend  = "Groups",
+                              filename = NULL,
+                              print.pvalue = TRUE)
+```
+
+```{r echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+# Sitios CpG metilados diferencialmente
+dmc <- TCGAanalyze_DMR(met,
+                       groupCol = "project_id", # una columna en colData matrix
+                       group1 = "TCGA-GBM", # un tipo de enfermedad (type column)
+                       group2 = "TCGA-LGG", # un tipo de la columna enfermedad
+                       p.cut = 0.05,
+                       diffmean.cut = 0.15,
+                       save = FALSE,
+                       legend = "State",
+                       plot.filename = "LGG_GBM_metvolcano.png",
+                       cores = 1 # bar
+)
+```
+
+```{r echo=TRUE, results='hide', message=FALSE,warning=FALSE}
+
+# Heatmap de metilación de DNA
+
+library(ComplexHeatmap)
+clinical <- plyr::rbind.fill(gbm_clin,lgg_clin)
+
+# Conseguir sondas hipermetiladas o hipometiladas (objeto de análisis de metilación de DNA)
+status.col <- "status"
+probes <- rownames(dmc)[grep("hypo|hyper",dmc$status,ignore.case = TRUE)]
+sig.met <- met[probes,]
+
+# TOP Annotation (se añaden datos clínicos como anotación de muestras y se ordena)
+clinical.order <- clinical[match(substr(colnames(sig.met),1,12),clinical$bcr_patient_barcode),]
+ta = HeatmapAnnotation(df = clinical.order[, c("disease", "gender", "vital_status", "race")],
+                       col = list(
+                         disease = c("LGG" = "grey", "GBM" = "black"),
+                         gender = c("male" = "blue", "female" = "pink")
+                       ))
+
+heatmap <- Heatmap(assay(sig.met),
+                    name = "DNA methylation",
+                    col = matlab::jet.colors(200),
+                    show_row_names = FALSE,
+                    cluster_rows = TRUE,
+                    cluster_columns = FALSE,
+                    show_column_names = FALSE,
+                    bottom_annotation = ta,
+                    column_title = "DNA Methylation") 
+
+# Se guarda como pdf
+png("heatmap.png",width = 600, height = 400)
+draw(heatmap, annotation_legend_side =  "bottom")
+dev.off()
+```
+
+```{r}
+pander::pander(sessionInfo(), compact = FALSE)
+```
